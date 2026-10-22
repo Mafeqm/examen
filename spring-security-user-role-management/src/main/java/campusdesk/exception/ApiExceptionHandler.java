@@ -72,6 +72,19 @@ public class ApiExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
     }
 
+    @ExceptionHandler(FeedbackAlreadyExistsException.class)
+    public ResponseEntity<ApiErrorResponse> handleFeedbackAlreadyExists(FeedbackAlreadyExistsException ex, HttpServletRequest request) {
+        log.warn("Conflicto al registrar feedback en [{}]: {}", request.getRequestURI(), ex.getMessage());
+        ApiErrorResponse error = ApiErrorResponse.builder()
+                .status(HttpStatus.CONFLICT.value())
+                .error(HttpStatus.CONFLICT.getReasonPhrase())
+                .message(ex.getMessage())
+                .timestamp(Instant.now().toString())
+                .path(request.getRequestURI())
+                .build();
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
     /**
      * Error de validación de campos en requests (HTTP 400).
      */
