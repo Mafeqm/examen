@@ -57,11 +57,11 @@
       const token = this.getToken();
       const baseUrl = (typeof window.getCampusDeskApiUrl === 'function')
         ? window.getCampusDeskApiUrl()
-        : (window.location.protocol.startsWith('http') ? window.location.origin : 'http://localhost:8056');
+        : '';
 
       if (token) {
         try {
-          await fetch(`${baseUrl}/auth/logout`, {
+          await fetch(`${baseUrl}/api/auth/logout`, {
             method: 'POST',
             headers: {
               'Authorization': 'Bearer ' + token,

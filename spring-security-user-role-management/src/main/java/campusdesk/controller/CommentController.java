@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,6 +26,7 @@ import java.util.List;
 /**
  * Controlador REST para el hilo de comentarios y notas de incidencias (RF-05).
  */
+@CrossOrigin(origins = "*")
 @RestController
 @RequestMapping({"/api/tickets/{ticketId}/comments", "/api/ticket/{ticketId}/comments"})
 @RequiredArgsConstructor

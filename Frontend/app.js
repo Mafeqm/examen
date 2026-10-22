@@ -9,7 +9,7 @@
   // 1. Configuración de API y URLs
   const BASE_URL = (typeof window.getCampusDeskApiUrl === 'function')
     ? window.getCampusDeskApiUrl()
-    : (window.location.protocol.startsWith('http') ? window.location.origin : 'http://localhost:8056');
+    : '';
 
   // 2. Estado de la Aplicación
   const AppState = {

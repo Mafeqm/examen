@@ -30,6 +30,7 @@ public class RedisSessionServiceImpl implements RedisSessionService {
     private final RedisTemplate<String, Object> redisTemplate;
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
+    private final java.util.Map<String, UserSessionRedisDto> fallbackSessions = new java.util.concurrent.ConcurrentHashMap<>();
 
     @Override
     public void saveSession(String token, UserSessionRedisDto sessionData, long ttlSeconds) {
@@ -42,17 +43,24 @@ public class RedisSessionServiceImpl implements RedisSessionService {
         String sessionKey = SESSION_KEY_PREFIX + tokenHash;
         Duration ttl = Duration.ofSeconds(Math.max(ttlSeconds, 1));
 
-        // 1. Guardar la sesión completa con TTL estricto
-        redisTemplate.opsForValue().set(sessionKey, sessionData, ttl);
-        log.info("Sesión guardada en Redis con clave [{}] y TTL de {} segundos para el usuario [{}]",
-                sessionKey, ttlSeconds, sessionData.getUsername());
+        // Guardar siempre en memoria local como respaldo inmediato
+        fallbackSessions.put(sessionKey, sessionData);
 
-        // 2. Indexar token por usuario en Set para control multi-sesión
-        String username = sessionData.getUsername() != null ? sessionData.getUsername() : sessionData.getEmail();
-        if (username != null && !username.isBlank()) {
-            String userTokensKey = USER_TOKENS_KEY_PREFIX + username;
-            stringRedisTemplate.opsForSet().add(userTokensKey, tokenHash);
-            stringRedisTemplate.expire(userTokensKey, ttl);
+        try {
+            // 1. Guardar en Redis si está disponible
+            redisTemplate.opsForValue().set(sessionKey, sessionData, ttl);
+            log.info("Sesión guardada en Redis con clave [{}] y TTL de {} segundos para el usuario [{}]",
+                    sessionKey, ttlSeconds, sessionData.getUsername());
+
+            // 2. Indexar token por usuario en Set para control multi-sesión
+            String username = sessionData.getUsername() != null ? sessionData.getUsername() : sessionData.getEmail();
+            if (username != null && !username.isBlank()) {
+                String userTokensKey = USER_TOKENS_KEY_PREFIX + username;
+                stringRedisTemplate.opsForSet().add(userTokensKey, tokenHash);
+                stringRedisTemplate.expire(userTokensKey, ttl);
+            }
+        } catch (Exception e) {
+            log.warn("Redis no disponible para guardar sesión, usando almacenamiento seguro en memoria: {}", e.getMessage());
         }
     }
 
@@ -65,24 +73,23 @@ public class RedisSessionServiceImpl implements RedisSessionService {
         String tokenHash = hashToken(token);
         String sessionKey = SESSION_KEY_PREFIX + tokenHash;
 
-        Object rawSession = redisTemplate.opsForValue().get(sessionKey);
-        if (rawSession == null) {
-            log.debug("No se encontró sesión activa en Redis para la clave [{}]", sessionKey);
-            return Optional.empty();
+        try {
+            Object rawSession = redisTemplate.opsForValue().get(sessionKey);
+            if (rawSession != null) {
+                UserSessionRedisDto sessionDto;
+                if (rawSession instanceof UserSessionRedisDto typed) {
+                    sessionDto = typed;
+                } else {
+                    sessionDto = objectMapper.convertValue(rawSession, UserSessionRedisDto.class);
+                }
+                return Optional.of(sessionDto);
+            }
+        } catch (Exception e) {
+            log.warn("Redis no disponible para consultar sesión, verificando almacenamiento en memoria: {}", e.getMessage());
         }
 
-        try {
-            UserSessionRedisDto sessionDto;
-            if (rawSession instanceof UserSessionRedisDto typed) {
-                sessionDto = typed;
-            } else {
-                sessionDto = objectMapper.convertValue(rawSession, UserSessionRedisDto.class);
-            }
-            return Optional.of(sessionDto);
-        } catch (Exception e) {
-            log.error("Error al deserializar sesión desde Redis para clave [{}]: {}", sessionKey, e.getMessage());
-            return Optional.empty();
-        }
+        // Respaldo en memoria local
+        return Optional.ofNullable(fallbackSessions.get(sessionKey));
     }
 
     @Override
@@ -91,8 +98,15 @@ public class RedisSessionServiceImpl implements RedisSessionService {
             return false;
         }
         String sessionKey = SESSION_KEY_PREFIX + hashToken(token);
-        Boolean hasKey = redisTemplate.hasKey(sessionKey);
-        return Boolean.TRUE.equals(hasKey);
+        try {
+            Boolean hasKey = redisTemplate.hasKey(sessionKey);
+            if (Boolean.TRUE.equals(hasKey)) {
+                return true;
+            }
+        } catch (Exception e) {
+            log.warn("Redis no disponible para verificar sesión: {}", e.getMessage());
+        }
+        return fallbackSessions.containsKey(sessionKey);
     }
 
     @Override
@@ -104,19 +118,23 @@ public class RedisSessionServiceImpl implements RedisSessionService {
         String tokenHash = hashToken(token);
         String sessionKey = SESSION_KEY_PREFIX + tokenHash;
 
-        // Recuperar sesión antes de borrar para limpiar el índice del usuario
-        Optional<UserSessionRedisDto> sessionOpt = getSession(token);
-        sessionOpt.ifPresent(session -> {
-            String username = session.getUsername() != null ? session.getUsername() : session.getEmail();
-            if (username != null && !username.isBlank()) {
-                String userTokensKey = USER_TOKENS_KEY_PREFIX + username;
-                stringRedisTemplate.opsForSet().remove(userTokensKey, tokenHash);
-            }
-        });
+        fallbackSessions.remove(sessionKey);
 
-        // Eliminar clave de sesión
-        Boolean deleted = redisTemplate.delete(sessionKey);
-        log.info("Sesión invalidada en Redis para clave [{}] (eliminada: {})", sessionKey, deleted);
+        try {
+            Optional<UserSessionRedisDto> sessionOpt = getSession(token);
+            sessionOpt.ifPresent(session -> {
+                String username = session.getUsername() != null ? session.getUsername() : session.getEmail();
+                if (username != null && !username.isBlank()) {
+                    String userTokensKey = USER_TOKENS_KEY_PREFIX + username;
+                    stringRedisTemplate.opsForSet().remove(userTokensKey, tokenHash);
+                }
+            });
+
+            Boolean deleted = redisTemplate.delete(sessionKey);
+            log.info("Sesión invalidada en Redis para clave [{}] (eliminada: {})", sessionKey, deleted);
+        } catch (Exception e) {
+            log.warn("Redis no disponible al invalidar sesión: {}", e.getMessage());
+        }
     }
 
     @Override
@@ -125,18 +143,24 @@ public class RedisSessionServiceImpl implements RedisSessionService {
             return;
         }
 
-        String userTokensKey = USER_TOKENS_KEY_PREFIX + username;
-        Set<String> tokenHashes = stringRedisTemplate.opsForSet().members(userTokensKey);
+        fallbackSessions.values().removeIf(s -> username.equals(s.getUsername()) || username.equals(s.getEmail()));
 
-        if (tokenHashes != null && !tokenHashes.isEmpty()) {
-            for (String hash : tokenHashes) {
-                String sessionKey = SESSION_KEY_PREFIX + hash;
-                redisTemplate.delete(sessionKey);
-                log.info("Sesión revocada [{}] para el usuario [{}]", sessionKey, username);
+        try {
+            String userTokensKey = USER_TOKENS_KEY_PREFIX + username;
+            Set<String> tokenHashes = stringRedisTemplate.opsForSet().members(userTokensKey);
+
+            if (tokenHashes != null && !tokenHashes.isEmpty()) {
+                for (String hash : tokenHashes) {
+                    String sessionKey = SESSION_KEY_PREFIX + hash;
+                    redisTemplate.delete(sessionKey);
+                    log.info("Sesión revocada [{}] para el usuario [{}]", sessionKey, username);
+                }
+                stringRedisTemplate.delete(userTokensKey);
             }
-            stringRedisTemplate.delete(userTokensKey);
+            log.info("Todas las sesiones revocadas para el usuario [{}]", username);
+        } catch (Exception e) {
+            log.warn("Redis no disponible al invalidar sesiones de usuario: {}", e.getMessage());
         }
-        log.info("Todas las sesiones revocadas para el usuario [{}]", username);
     }
 
     @Override
@@ -145,7 +169,11 @@ public class RedisSessionServiceImpl implements RedisSessionService {
             return;
         }
         String sessionKey = SESSION_KEY_PREFIX + hashToken(token);
-        redisTemplate.expire(sessionKey, Duration.ofSeconds(Math.max(ttlSeconds, 1)));
+        try {
+            redisTemplate.expire(sessionKey, Duration.ofSeconds(Math.max(ttlSeconds, 1)));
+        } catch (Exception e) {
+            log.warn("Redis no disponible al refrescar sesión: {}", e.getMessage());
+        }
     }
 
     /**

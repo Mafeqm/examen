@@ -48,6 +48,22 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // Recursos estáticos del frontend (HTML, CSS, JS, imágenes)
+                        .requestMatchers(
+                                "/",
+                                "/index.html",
+                                "/login.html",
+                                "/registro.html",
+                                "/dashboard.html",
+                                "/*.html",
+                                "/*.css",
+                                "/*.js",
+                                "/*.png",
+                                "/*.jpg",
+                                "/*.svg",
+                                "/*.ico",
+                                "/static/**"
+                        ).permitAll()
                         // Rutas públicas de autenticación y documentación de API
                         .requestMatchers(
                                 "/auth/register",
@@ -74,16 +90,15 @@ public class SecurityConfig {
     }
 
     /**
-     * Configuración CORS para habilitar la comunicación con clientes web frontend (E5).
-     * Utiliza orígenes explícitos configurables evitando el uso de comodines con credenciales.
+     * Configuración CORS para habilitar la comunicación con clientes web frontend.
      */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(allowedOrigins);
+        configuration.setAllowedOriginPatterns(List.of("*"));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", "X-Requested-With"));
-        configuration.setExposedHeaders(List.of("Authorization"));
+        configuration.setAllowedHeaders(List.of("*"));
+        configuration.setExposedHeaders(List.of("Authorization", "*"));
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
