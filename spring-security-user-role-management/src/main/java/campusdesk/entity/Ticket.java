@@ -17,6 +17,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import jakarta.persistence.ManyToMany;
+import jakarta.persistence.OneToOne;
 import jakarta.persistence.JoinTable;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -41,7 +42,7 @@ import java.util.Set;
 @AllArgsConstructor
 @Builder
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
-@ToString(exclude = {"solicitante", "tecnico"})
+@ToString(exclude = {"solicitante", "tecnico", "feedback"})
 public class Ticket {
 
     @Id
@@ -67,6 +68,9 @@ public class Ticket {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "tecnico_id")
     private User tecnico;
+
+    @OneToOne(mappedBy = "ticket", fetch = FetchType.LAZY)
+    private TicketFeedback feedback;
 
     @NotNull(message = "El estado es obligatorio")
     @Enumerated(EnumType.STRING)
